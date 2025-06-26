@@ -134,15 +134,15 @@ METALLB_IP_RANGE=1.1.1.200-1.1.1.210
 # 🏗️ CONFIGURACIÓN DE NODOS (JSON) - ¡NUEVA CARACTERÍSTICA!
 # Formato: {"hostname": {"ip": "x.x.x.x", "type": "master|worker|storage", "primary": true/false}}
 NODES_CONFIG='{
-  "prd3appk8sm1": {"ip": "10.97.222.20", "type": "master", "primary": true},
-  "prd3appk8sm2": {"ip": "10.97.222.21", "type": "master", "primary": false},
-  "prd3appk8sm3": {"ip": "10.97.222.22", "type": "master", "primary": false},
-  "prd3appk8sw1": {"ip": "10.97.222.30", "type": "worker", "primary": false},
-  "prd3appk8sw2": {"ip": "10.97.222.31", "type": "worker", "primary": false},
-  "prd3appk8sw3": {"ip": "10.97.222.32", "type": "worker", "primary": false},
-  "prd3appk8ss1": {"ip": "10.97.222.40", "type": "storage", "primary": false},
-  "prd3appk8ss2": {"ip": "10.97.222.41", "type": "storage", "primary": false},
-  "prd3appk8ss3": {"ip": "10.97.222.42", "type": "storage", "primary": false}
+  "prd3appk8sm1": {"ip": "1.1.1.20", "type": "master", "primary": true},
+  "prd3appk8sm2": {"ip": "1.1.1.21", "type": "master", "primary": false},
+  "prd3appk8sm3": {"ip": "1.1.1.22", "type": "master", "primary": false},
+  "prd3appk8sw1": {"ip": "1.1.1.30", "type": "worker", "primary": false},
+  "prd3appk8sw2": {"ip": "1.1.1.31", "type": "worker", "primary": false},
+  "prd3appk8sw3": {"ip": "1.1.1.32", "type": "worker", "primary": false},
+  "prd3appk8ss1": {"ip": "1.1.1.40", "type": "storage", "primary": false},
+  "prd3appk8ss2": {"ip": "1.1.1.41", "type": "storage", "primary": false},
+  "prd3appk8ss3": {"ip": "1.1.1.42", "type": "storage", "primary": false}
 }'
 ```
 
