@@ -15,6 +15,9 @@ echo "🚀 Iniciando instalación del clúster RKE2..."
 # =========================
 validate_nodes_config
 
+# Validar configuración de subdominios
+validate_subdomain_config
+
 # Verificar si el clúster ya existe
 if kubectl get nodes &>/dev/null; then
   echo "⚠️  El clúster RKE2 ya parece estar configurado."
@@ -52,6 +55,9 @@ if [ "$CURRENT_HOSTNAME" != "$PRIMARY_MASTER" ]; then
   exit 1
 fi
 
+# Obtener IP del master principal
+PRIMARY_MASTER_IP=$(get_node_ip "$PRIMARY_MASTER")
+
 # Crear configuración para master principal
 echo "📝 Creando configuración RKE2 para master principal..."
 cat <<EOF > /etc/rancher/rke2/config.yaml
@@ -69,6 +75,9 @@ node-label:
   - "rke2-master=true"
   - "node-role.kubernetes.io/master=true"
 write-kubeconfig-mode: "0644"
+# TLS SANs para todos los subdominios
+tls-san:
+$(get_complete_tls_sans "$PRIMARY_MASTER_IP")
 EOF
 
 # Instalar RKE2
@@ -131,6 +140,9 @@ else
       echo ""
       echo "🚀 Configurando $hostname como master secundario..."
       
+      # Obtener IP del master secundario
+      MASTER_IP=$(get_node_ip "$hostname")
+      
       ssh -p "$SSH_PORT" "$SSH_USER@$hostname" bash -s <<EOF
 set -euo pipefail
 echo "📁 Preparando directorios en $hostname..."
@@ -141,7 +153,7 @@ echo "📝 Creando configuración RKE2..."
 cat <<EOC > /etc/rancher/rke2/config.yaml
 # Configuración Master Secundario - $hostname
 token: $MASTER_TOKEN
-server: https://$LB_IP:9345
+server: https://$K8S_API_DOMAIN:443
 node-taint:
   - "CriticalAddonsOnly=true:NoExecute"
 cni: calico
@@ -154,6 +166,15 @@ node-label:
   - "rke2-master=true"
   - "node-role.kubernetes.io/master=true"
 write-kubeconfig-mode: "0644"
+# TLS SANs para todos los subdominios
+tls-san:
+  - $K8S_API_DOMAIN
+  - $K8S_REG_DOMAIN
+  - $RANCHER_DOMAIN
+  - $LB_IP
+  - $MASTER_IP
+  - localhost
+  - 127.0.0.1
 EOC
 
 echo "⬇️  Instalando RKE2 $RKE2_VERSION en $hostname..."
@@ -199,7 +220,7 @@ echo "📝 Creando configuración RKE2..."
 cat <<EOW > /etc/rancher/rke2/config.yaml
 # Configuración Worker - $hostname
 token: $MASTER_TOKEN
-server: https://$LB_IP:9345
+server: https://$K8S_REG_DOMAIN:443
 node-label:
   - "rke2-worker=true"
   - "rke2-rancher=true"
@@ -246,7 +267,7 @@ echo "📝 Creando configuración RKE2..."
 cat <<EOS > /etc/rancher/rke2/config.yaml
 # Configuración Storage - $hostname
 token: $MASTER_TOKEN
-server: https://$LB_IP:9345
+server: https://$K8S_REG_DOMAIN:443
 node-label:
   - "rke2-storage=true"
   - "ceph-node=true"
@@ -334,6 +355,36 @@ echo ""
 echo "🧮 Información de etcd:"
 kubectl get endpoints etcd -n kube-system -o yaml | grep -A 10 "addresses:"
 
+# 9. ACTUALIZAR KUBECONFIG CON SUBDOMINIOS
+# ========================================
+echo ""
+echo "🔧 Actualizando kubeconfig para usar subdominios..."
+
+# Actualizar kubeconfig local para usar el subdominio API
+sed -i "s|server: https://.*:6443|server: https://$K8S_API_DOMAIN:443|g" /etc/rancher/rke2/rke2.yaml
+
+# Crear kubeconfig para el proyecto
+PROJECT_KUBECONFIG="kubeconfig"
+cp /etc/rancher/rke2/rke2.yaml "$PROJECT_KUBECONFIG"
+chmod 644 "$PROJECT_KUBECONFIG"
+
+echo "✅ Kubeconfig actualizado:"
+echo "   • Local: /etc/rancher/rke2/rke2.yaml"
+echo "   • Proyecto: $PROJECT_KUBECONFIG"
+echo "   • Server URL: https://$K8S_API_DOMAIN:443"
+
+# Verificar conectividad con el nuevo endpoint
+echo ""
+echo "🔍 Verificando conectividad con subdominios..."
+export KUBECONFIG="$PROJECT_KUBECONFIG"
+
+if kubectl cluster-info &>/dev/null; then
+  echo "✅ Conectividad verificada con $K8S_API_DOMAIN"
+else
+  echo "⚠️  Warning: No se puede conectar via $K8S_API_DOMAIN"
+  echo "💡 Verifica la configuración de NGINX Plus LoadBalancer"
+fi
+
 echo ""
 echo "🎉 Instalación del clúster RKE2 completada exitosamente"
 echo "📊 Resumen final:"
@@ -341,6 +392,13 @@ echo "   • Clúster RKE2 versión: $RKE2_VERSION"
 echo "   • Master principal: $PRIMARY_MASTER"
 echo "   • Total de nodos: $CURRENT_NODES"
 echo "   • Nodos listos: $READY_NODES"
-echo "   • Configuración kubeconfig: /etc/rancher/rke2/rke2.yaml"
+echo "   • API Endpoint: https://$K8S_API_DOMAIN:443"
+echo "   • Registration Endpoint: https://$K8S_REG_DOMAIN:443"
+echo "   • Configuración kubeconfig: $PROJECT_KUBECONFIG"
+echo ""
+echo "🌐 Endpoints configurados:"
+echo "   • Kubernetes API: https://$K8S_API_DOMAIN:443"
+echo "   • Registration: https://$K8S_REG_DOMAIN:443"
+echo "   • Rancher (próximo): https://$RANCHER_DOMAIN"
 echo ""
 echo "👉 Continúa con: scripts/03-install-ceph.sh"
