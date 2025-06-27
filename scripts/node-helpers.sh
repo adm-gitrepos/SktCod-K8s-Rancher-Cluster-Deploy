@@ -558,6 +558,48 @@ export_config() {
     esac
 }
 
+# Validar configuración de subdominios
+validate_subdomain_config() {
+    local required_domains=("RANCHER_DOMAIN" "K8S_API_DOMAIN" "K8S_REG_DOMAIN")
+    local missing_domains=()
+    
+    for domain_var in "${required_domains[@]}"; do
+        if [[ -z "${!domain_var}" ]]; then
+            missing_domains+=("$domain_var")
+        fi
+    done
+    
+    if [[ ${#missing_domains[@]} -gt 0 ]]; then
+        echo "❌ Error: Variables faltantes: ${missing_domains[*]}"
+        return 1
+    fi
+    return 0
+}
+
+# Generar server URL según tipo de nodo
+get_rke2_server_url() {
+    local node_type="$1"
+    if [[ "$node_type" == "master" ]]; then
+        echo "https://${K8S_API_DOMAIN}:443"
+    else
+        echo "https://${K8S_REG_DOMAIN}:443"
+    fi
+}
+
+# Generar TLS SANs completos
+get_complete_tls_sans() {
+    local node_ip="$1"
+    cat << EOF
+  - ${K8S_API_DOMAIN}
+  - ${K8S_REG_DOMAIN}
+  - ${RANCHER_DOMAIN}
+  - ${LB_IP}
+  - ${node_ip}
+  - localhost
+  - 127.0.0.1
+EOF
+}
+
 # 🏁 Mensaje de carga exitosa
 if [ "${BASH_SOURCE[0]}" = "${0}" ]; then
     echo "🧰 Funciones helper de node-helpers.sh cargadas exitosamente"
