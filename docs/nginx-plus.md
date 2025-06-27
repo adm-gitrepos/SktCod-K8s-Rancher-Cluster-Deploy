@@ -262,52 +262,129 @@ include /etc/nginx/conf.d/nginx-rke2-http.conf;
 
 ```nginx
 # Configuración avanzada con health checks
+# 🚀 RKE2 + Rancher NGINX Plus Configuration
+# Generado manualmente - Configuración unificada
+# Dominio principal: rancher.midominio.com
+
+# =======================================
+# STREAM (L4) - Kubernetes API y Registration
+# =======================================
+
 stream {
+    # 🔧 Upstream Kubernetes API (6443)
     upstream rke2_api {
-        zone rke2_api 64k;
-        # Nodos generados automáticamente
-        server prd3appk8sm1:6443 max_fails=3 fail_timeout=30s;
-        server prd3appk8sm2:6443 max_fails=3 fail_timeout=30s;
-        server prd3appk8sm3:6443 max_fails=3 fail_timeout=30s;
+        server 192.168.1.101:6443 max_fails=3 fail_timeout=30s;
+        server 192.168.1.102:6443 max_fails=3 fail_timeout=30s;
+        server 192.168.1.103:6443 max_fails=3 fail_timeout=30s;
     }
-    
-    # Health check para API
-    match api_check {
-        expect ~* "200|401";
+
+    # 🔧 Upstream Registration (9345)
+    upstream rke2_registration {
+        server 192.168.1.101:9345 max_fails=3 fail_timeout=30s;
+        server 192.168.1.102:9345 max_fails=3 fail_timeout=30s;
+        server 192.168.1.103:9345 max_fails=3 fail_timeout=30s;
     }
-    
+
+    # 📡 Server Kubernetes API
     server {
-        listen 6443;
+        listen 192.168.1.50:6443;
         proxy_pass rke2_api;
-        health_check match=api_check interval=10s;
+        proxy_timeout 10s;
+        proxy_connect_timeout 3s;
+        proxy_responses 1;
+    }
+
+    # 📡 Server Registration
+    server {
+        listen 192.168.1.50:9345;
+        proxy_pass rke2_registration;
+        proxy_timeout 10s;
+        proxy_connect_timeout 3s;
+        proxy_responses 1;
     }
 }
 
+# =======================================
+# HTTP (L7) - Rancher UI
+# =======================================
+
 http {
+    # 🔧 Upstream Rancher HTTP
+    upstream rancher_http {
+        server 192.168.1.201:80 max_fails=3 fail_timeout=30s;
+        server 192.168.1.202:80 max_fails=3 fail_timeout=30s;
+        server 192.168.1.203:80 max_fails=3 fail_timeout=30s;
+    }
+
+    # 🔧 Upstream Rancher HTTPS
     upstream rancher_https {
-        zone rancher_https 64k;
-        # Nodos worker generados automáticamente
-        server prd3appk8sw1:443 max_fails=3 fail_timeout=30s;
-        server prd3appk8sw2:443 max_fails=3 fail_timeout=30s;
-        server prd3appk8sw3:443 max_fails=3 fail_timeout=30s;
+        server 192.168.1.201:443 max_fails=3 fail_timeout=30s;
+        server 192.168.1.202:443 max_fails=3 fail_timeout=30s;
+        server 192.168.1.203:443 max_fails=3 fail_timeout=30s;
     }
-    
-    # Health check para Rancher
-    match rancher_check {
-        status 200-399;
-        header Content-Type ~ "text/html|application/json";
-    }
-    
+
+    # 📊 Logging formato
+    log_format rancher_access '$remote_addr - $remote_user [$time_local] '
+                              '"$request" $status $body_bytes_sent '
+                              '"$http_referer" "$http_user_agent" '
+                              'upstream: $upstream_addr';
+
+    # 🌐 HTTP -> HTTPS redirección
     server {
-        listen 443 ssl;
+        listen 192.168.1.50:80;
         server_name rancher.midominio.com;
-        
+
+        access_log /var/log/nginx/rancher-access.log rancher_access;
+        error_log /var/log/nginx/rancher-error.log warn;
+
+        return 301 https://$server_name$request_uri;
+    }
+
+    # 🔐 HTTPS Rancher UI
+    server {
+        listen 192.168.1.50:443 ssl http2;
+        server_name rancher.midominio.com;
+
+        ssl_certificate /etc/nginx/ssl/rancher.midominio.com.crt;
+        ssl_certificate_key /etc/nginx/ssl/rancher.midominio.com.key;
+        ssl_protocols TLSv1.2 TLSv1.3;
+        ssl_ciphers ECDHE-RSA-AES256-GCM-SHA384:ECDHE-RSA-CHACHA20-POLY1305;
+        ssl_prefer_server_ciphers off;
+
+        access_log /var/log/nginx/rancher-ssl-access.log rancher_access;
+        error_log /var/log/nginx/rancher-ssl-error.log warn;
+
+        # 🔧 Proxy a Rancher HTTPS backend
         location / {
             proxy_pass https://rancher_https;
-            health_check match=rancher_check interval=30s uri=/ping;
+            proxy_set_header Host $host;
+            proxy_set_header X-Real-IP $remote_addr;
+            proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+            proxy_set_header X-Forwarded-Proto $scheme;
+            proxy_set_header X-Forwarded-Host $host;
+            proxy_set_header X-Forwarded-Port $server_port;
+
+            proxy_connect_timeout 30s;
+            proxy_send_timeout 60s;
+            proxy_read_timeout 60s;
+
+            proxy_buffering off;
+            proxy_request_buffering off;
+
+            proxy_http_version 1.1;
+            proxy_set_header Upgrade $http_upgrade;
+            proxy_set_header Connection "upgrade";
+        }
+
+        # 📊 Health check
+        location /nginx-health {
+            access_log off;
+            return 200 "healthy\n";
+            add_header Content-Type text/plain;
         }
     }
 }
+
 ```
 
 ---
