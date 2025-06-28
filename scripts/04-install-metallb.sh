@@ -1,4 +1,9 @@
 #!/bin/bash
+# ============================================================
+# Biblioteca de funciones para manejo dinámico de nodos basado en NODES_CONFIG
+# Autor: @SktCod.ByChisto
+# Versión: 2.0
+
 set -euo pipefail
 trap 'echo "❌ Error en línea $LINENO durante instalación de MetalLB. Revisa el log." && exit 1' ERR
 
