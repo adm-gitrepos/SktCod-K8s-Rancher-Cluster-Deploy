@@ -449,14 +449,14 @@ $(generate_node_labels "$hostname")
 write-kubeconfig-mode: "0644"
 EOF
             else
-                # Master secundario
+                # Master secundario - CORREGIDO para usar subdominios
                 if [ -z "$master_token" ]; then
                     echo "❌ Error: master_token requerido para masters secundarios" >&2
                     return 1
                 fi
                 cat <<EOF
 token: $master_token
-server: https://${LB_IP}:9345
+server: $(get_rke2_server_url "master")
 node-taint:
 $(generate_node_taints "$hostname")
 cni: calico
@@ -472,14 +472,14 @@ EOF
             fi
             ;;
         worker|storage)
-            # Worker o storage node
+            # Worker o storage node - CORREGIDO para usar subdominios
             if [ -z "$master_token" ]; then
                 echo "❌ Error: master_token requerido para workers/storage" >&2
                 return 1
             fi
             cat <<EOF
 token: $master_token
-server: https://${LB_IP}:9345
+server: $(get_rke2_server_url "$node_type")
 node-label:
 $(generate_node_labels "$hostname")
 node-taint:
@@ -513,12 +513,15 @@ show_helper_functions() {
   validate_nodes_config              - Valida configuración JSON completa
   verify_ssh_connectivity           - Verifica SSH a todos los nodos
   validate_node_type_config "type"  - Valida configuración específica por tipo
+  validate_subdomain_config          - Valida configuración de subdominios
 
 🔧 Generación de Configuración:
   generate_ceph_nodes_yaml           - Genera YAML de nodos Ceph
   generate_node_labels "hostname"    - Genera etiquetas de nodo
   generate_node_taints "hostname"    - Genera taints de nodo
   generate_rke2_config "hostname" "token" - Genera config RKE2 completa
+  get_rke2_server_url "node_type"    - Genera server URL por tipo de nodo
+  get_complete_tls_sans "node_ip"    - Genera TLS SANs completos
 
 📊 Información:
   show_nodes_summary                 - Muestra resumen detallado
@@ -527,6 +530,7 @@ show_helper_functions() {
 📝 Ejemplos de Uso:
   source scripts/node-helpers.sh
   validate_nodes_config
+  validate_subdomain_config
   show_nodes_summary
   PRIMARY=\$(get_primary_master)
   get_nodes_by_type "worker" | while read node; do
@@ -558,6 +562,10 @@ export_config() {
     esac
 }
 
+# =======================================
+# 🌐 FUNCIONES PARA SUBDOMINIOS (NUEVAS)
+# =======================================
+
 # Validar configuración de subdominios
 validate_subdomain_config() {
     local required_domains=("RANCHER_DOMAIN" "K8S_API_DOMAIN" "K8S_REG_DOMAIN")
@@ -571,8 +579,14 @@ validate_subdomain_config() {
     
     if [[ ${#missing_domains[@]} -gt 0 ]]; then
         echo "❌ Error: Variables faltantes: ${missing_domains[*]}"
+        echo "💡 Agregar al .env:"
+        for domain in "${missing_domains[@]}"; do
+            echo "   $domain=tu-subdominio.midominio.com"
+        done
         return 1
     fi
+    
+    echo "✅ Configuración de subdominios válida"
     return 0
 }
 
@@ -620,10 +634,12 @@ fi
 # - Validar configuración de nodos y prerequisitos
 # - Generar configuraciones dinámicas para RKE2, Ceph, etc.
 # - Proporcionar información y estadísticas de la infraestructura
+# - Soporte completo para subdominios FQDN (K8S_API_DOMAIN, K8S_REG_DOMAIN, RANCHER_DOMAIN)
 # 
 # Uso típico:
 # 1. source scripts/node-helpers.sh
 # 2. validate_nodes_config
-# 3. show_nodes_summary
-# 4. PRIMARY=$(get_primary_master)
-# 5. WORKERS=$(get_nodes_by_type "worker")
+# 3. validate_subdomain_config
+# 4. show_nodes_summary
+# 5. PRIMARY=$(get_primary_master)
+# 6. WORKERS=$(get_nodes_by_type "worker")
