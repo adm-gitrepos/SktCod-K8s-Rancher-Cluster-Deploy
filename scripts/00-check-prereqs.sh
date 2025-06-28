@@ -1,6 +1,6 @@
 #!/bin/bash
 # ============================================================
-# Biblioteca de funciones para manejo dinámico de nodos basado en NODES_CONFIG
+# Script de verificación de prerequisitos para RKE2 + Rancher HA
 # Autor: @SktCod.ByChisto
 # Versión: 2.0
 
@@ -82,17 +82,50 @@ if [ -z "${ROOT_PASSWORD:-}" ]; then
 fi
 echo "✅ ROOT_PASSWORD configurado"
 
-# 4. VALIDAR DNS DE RANCHER
-# =========================
-echo "🌐 Verificando resolución DNS de $RANCHER_DOMAIN..."
-if getent hosts "$RANCHER_DOMAIN" >/dev/null; then
-  RESOLVED_IP=$(getent hosts "$RANCHER_DOMAIN" | awk '{print $1}')
-  echo "✅ $RANCHER_DOMAIN resuelve a: $RESOLVED_IP"
-else
-  echo "❌ El dominio $RANCHER_DOMAIN no es resoluble."
+# 4. VALIDAR CONFIGURACIÓN DE SUBDOMINIOS
+# =======================================
+echo "🌐 Validando configuración de subdominios..."
+
+# Validar que estén definidos
+validate_subdomain_config
+
+# Verificar resolución DNS de todos los subdominios
+DOMAINS_TO_CHECK=("$RANCHER_DOMAIN" "$K8S_API_DOMAIN" "$K8S_REG_DOMAIN")
+FAILED_DOMAINS=()
+
+for domain in "${DOMAINS_TO_CHECK[@]}"; do
+  echo -n "🔍 Verificando $domain: "
+  if getent hosts "$domain" >/dev/null 2>&1; then
+    RESOLVED_IP=$(getent hosts "$domain" | awk '{print $1}')
+    echo "✅ Resuelve a $RESOLVED_IP"
+  else
+    echo "❌ No resuelve"
+    FAILED_DOMAINS+=("$domain")
+  fi
+done
+
+if [ ${#FAILED_DOMAINS[@]} -gt 0 ]; then
+  echo ""
+  echo "❌ Los siguientes dominios no resuelven DNS: ${FAILED_DOMAINS[*]}"
   echo "💡 Configura DNS o agrega a /etc/hosts:"
-  echo "   echo '$LB_IP $RANCHER_DOMAIN' >> /etc/hosts"
-  exit 1
+  for domain in "${FAILED_DOMAINS[@]}"; do
+    echo "   echo '$LB_IP $domain' >> /etc/hosts"
+  done
+  echo ""
+  echo "📊 Endpoints que se configurarán:"
+  echo "   🔗 Kubernetes API:    https://$K8S_API_DOMAIN:443"
+  echo "   🔗 Registration:       https://$K8S_REG_DOMAIN:443"
+  echo "   🔗 Rancher UI:         https://$RANCHER_DOMAIN"
+  echo ""
+  echo "🔄 ¿Continuar sin resolución DNS? Los dominios se pueden configurar después (y/N)"
+  read -r -n 1 response
+  echo
+  if [[ ! "$response" =~ ^[Yy]$ ]]; then
+    echo "❌ Prerequisitos cancelados. Configura DNS antes de continuar."
+    exit 1
+  fi
+else
+  echo "✅ Todos los subdominios resuelven correctamente"
 fi
 
 # 5. VERIFICAR ACCESO SSH A TODOS LOS NODOS
@@ -138,20 +171,26 @@ fi
 # 7. VERIFICAR DISCOS EN NODOS DE STORAGE
 # =======================================
 echo "💽 Verificando /dev/sdb en nodos de almacenamiento..."
-get_nodes_by_type "storage" | while read -r node; do
-  if [ -n "$node" ]; then
-    echo -n "➡️  Verificando disco en $node: "
-    if ssh -p "$SSH_PORT" "$SSH_USER@$node" "lsblk /dev/sdb" &>/dev/null; then
-      DISK_SIZE=$(ssh -p "$SSH_PORT" "$SSH_USER@$node" "lsblk /dev/sdb -b -n -o SIZE" | head -1)
-      DISK_SIZE_GB=$((DISK_SIZE / 1024 / 1024 / 1024))
-      echo "✅ /dev/sdb disponible (${DISK_SIZE_GB}GB)"
-    else
-      echo "❌ /dev/sdb no encontrado o no accesible"
-      echo "💡 Asegúrate de que el nodo $node tenga un disco /dev/sdb disponible para Ceph"
-      exit 1
+
+STORAGE_NODES=$(get_nodes_by_type "storage" 2>/dev/null || echo "")
+if [ -n "$STORAGE_NODES" ]; then
+  echo "$STORAGE_NODES" | while read -r node; do
+    if [ -n "$node" ]; then
+      echo -n "➡️  Verificando disco en $node: "
+      if ssh -p "$SSH_PORT" "$SSH_USER@$node" "lsblk /dev/sdb" &>/dev/null; then
+        DISK_SIZE=$(ssh -p "$SSH_PORT" "$SSH_USER@$node" "lsblk /dev/sdb -b -n -o SIZE" | head -1)
+        DISK_SIZE_GB=$((DISK_SIZE / 1024 / 1024 / 1024))
+        echo "✅ /dev/sdb disponible (${DISK_SIZE_GB}GB)"
+      else
+        echo "❌ /dev/sdb no encontrado o no accesible"
+        echo "💡 Asegúrate de que el nodo $node tenga un disco /dev/sdb disponible para Ceph"
+        exit 1
+      fi
     fi
-  fi
-done
+  done
+else
+  echo "ℹ️  No hay nodos storage configurados - omitiendo verificación de discos"
+fi
 
 # 8. VERIFICAR SISTEMA OPERATIVO
 # ==============================
@@ -184,15 +223,69 @@ else
   echo "⚠️  Espacio limitado en /: ${ROOT_AVAILABLE}GB (se recomienda ≥20GB)"
 fi
 
+# 11. VERIFICAR PUERTOS REQUERIDOS
+# ================================
+echo "🔌 Verificando puertos requeridos..."
+
+# Función para verificar si un puerto está en uso
+check_port() {
+  local port=$1
+  local description=$2
+  
+  if netstat -ln 2>/dev/null | grep -q ":$port "; then
+    echo "⚠️  Puerto $port ($description) ya está en uso"
+  else
+    echo "✅ Puerto $port ($description) disponible"
+  fi
+}
+
+# Verificar puertos críticos
+check_port 6443 "Kubernetes API"
+check_port 9345 "RKE2 Registration"
+check_port 2379 "etcd client"
+check_port 2380 "etcd peer"
+check_port 10250 "kubelet"
+
+# 12. VERIFICAR CONECTIVIDAD A INTERNET
+# =====================================
+echo "🌍 Verificando conectividad a internet..."
+
+EXTERNAL_SITES=("google.com" "github.com" "get.rke2.io")
+CONNECTIVITY_OK=true
+
+for site in "${EXTERNAL_SITES[@]}"; do
+  echo -n "🔍 Verificando $site: "
+  if ping -c 1 -W 3 "$site" &>/dev/null; then
+    echo "✅ Accesible"
+  else
+    echo "❌ No accesible"
+    CONNECTIVITY_OK=false
+  fi
+done
+
+if [ "$CONNECTIVITY_OK" = false ]; then
+  echo "⚠️  Algunos sitios externos no son accesibles"
+  echo "💡 Verifica la conectividad a internet o configuración de proxy"
+fi
+
 echo ""
 echo "🎉 Verificación de prerequisitos completada exitosamente"
 echo "📋 Resumen:"
 echo "   • Paquetes requeridos: ✅ Instalados"
 echo "   • Configuración de nodos: ✅ Válida"
+echo "   • Configuración de subdominios: ✅ Válida"
 echo "   • Conectividad SSH: ✅ Funcionando"
-echo "   • DNS de Rancher: ✅ Resoluble"
+echo "   • DNS de subdominios: $([ ${#FAILED_DOMAINS[@]} -eq 0 ] && echo "✅ Resuelven" || echo "⚠️ Pendientes")"
 echo "   • Módulos kernel: ✅ Cargados"
-echo "   • Discos storage: ✅ Disponibles"
+echo "   • Discos storage: $([ -n "$STORAGE_NODES" ] && echo "✅ Disponibles" || echo "ℹ️ No configurados")"
 echo "   • Recursos del sistema: ✅ Suficientes"
+echo "   • Puertos del sistema: ✅ Verificados"
+echo "   • Conectividad externa: $([ "$CONNECTIVITY_OK" = true ] && echo "✅ OK" || echo "⚠️ Limitada")"
+
+echo ""
+echo "🌐 Endpoints configurados:"
+echo "   🔗 Kubernetes API:    https://$K8S_API_DOMAIN:443"
+echo "   🔗 Registration:       https://$K8S_REG_DOMAIN:443"
+echo "   🔗 Rancher UI:         https://$RANCHER_DOMAIN"
 echo ""
 echo "👉 Continúa con: scripts/01-setup-ssh.sh"
