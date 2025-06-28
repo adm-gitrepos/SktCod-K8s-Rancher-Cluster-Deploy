@@ -15,8 +15,17 @@ echo "🌐 Iniciando instalación de MetalLB..."
 # =========================
 validate_nodes_config
 
+# Validar configuración de subdominios
+validate_subdomain_config
+
 export PATH=$PATH:/var/lib/rancher/rke2/bin
-export KUBECONFIG=/etc/rancher/rke2/rke2.yaml
+export KUBECONFIG=${KUBECONFIG:-/etc/rancher/rke2/rke2.yaml}
+
+# Verificar que kubeconfig use el endpoint correcto
+if ! grep -q "$K8S_API_DOMAIN" "$KUBECONFIG" 2>/dev/null; then
+  echo "⚠️  Warning: kubeconfig no apunta a $K8S_API_DOMAIN"
+  echo "💡 Ejecuta primero: scripts/02-install-cluster.sh"
+fi
 
 # Verificar comandos requeridos
 for cmd in kubectl; do
