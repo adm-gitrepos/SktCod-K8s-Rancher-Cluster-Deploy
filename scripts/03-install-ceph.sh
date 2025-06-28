@@ -15,6 +15,9 @@ echo "💾 Iniciando instalación de Rook-Ceph..."
 # =========================
 validate_nodes_config
 
+# Validar configuración de subdominios
+validate_subdomain_config
+
 export PATH=$PATH:/var/lib/rancher/rke2/bin
 export KUBECONFIG=${KUBECONFIG:-/etc/rancher/rke2/rke2.yaml}
 
